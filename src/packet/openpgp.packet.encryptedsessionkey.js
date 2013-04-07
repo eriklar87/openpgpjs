@@ -119,6 +119,61 @@ function openpgp_packet_encryptedsessionkey() {
 		result = openpgp_packet.write_packet_header(1, result.length) + result;
 		return result;
 	}
+	
+	/**
+	 * create a string representation of a tag 3 packet
+	 * NOT COMPLETE. THE SESSION KEY SHOULD BE TAKEN AS AN OPTIONAL PARAM AS WELL
+	 * 
+	 * @param symmalgo
+	 *            [integer] the symmetric cipher algorithm used to encrypt the
+	 *            data within an encrypteddatapacket or
+	 *            encryptedintegrityprotecteddatapacket following this packet //
+	 *            See RFC4880 9.2
+	 * @param s2kType [number] The String-to-Key type used to derive the key
+	 * @param passphrase [String] The pass phrase used by the s2k.
+	 * @param hash [number] The hash type to be used by the algorithm.
+	 * @param salet [string] The salt for the s2k.
+	 * @param c [number] The coded count (see https://tools.ietf.org/html/rfc4880#section-3.7)
+	 * @param sessionKey [String] Optional. The encrypted session key.
+	 * @return [String] the string representation
+	 */
+	function write_symmetric_key_packet(symmalgo, s2kType, passphrase, hash, salt, c, sessionKey) {
+		var result = String.fromCharCode(4); // Version number, always 4.
+		result += String.fromCharCode(symmalgo); // Append sym algo.
+		var s2k = new openpgp_type_s2k();
+		
+		// TODO: Add TrippleDES
+		var nbrKeyBytes = 0;
+		if(symmalgo == 3 || symmalgo == 4 || symmalgo == 7) 
+		{
+			nbrKeyBytes = 16;
+		} 
+		else if(symmalgo == 8) 
+		{
+			nbrKeyBytes = 24;
+		} 
+		else if(symmalgo == 9 || symmalgo == 10) 
+		{
+			nbrKeyBytes = 32;
+		}
+		
+		this.key = s2k.write(s2kType, hash, passphrase, salt, c, nbrKeyBytes);
+		result += String.fromCharCode(s2k.type);
+		result += String.fromCharCode(s2k.hashAlgorithm);
+		result += salt;
+		
+		this.s2k = s2k;
+		
+		result += String.fromCharCode(c); // Append s2k-identifier. 
+		
+		if(sessionKey != undefined) {
+			result += sessionKey;
+		}
+		
+		result = openpgp_packet.write_old_packet_header(3, result.length) + result;
+		return result;
+	}
+	
 
 	/**
 	 * parsing function for a symmetric encrypted session key packet (tag 3).
@@ -134,22 +189,31 @@ function openpgp_packet_encryptedsessionkey() {
 		this.tagType = 3;
 		var mypos = position;
 		// A one-octet version number. The only currently defined version is 4.
-		this.version = input[mypos++];
+		util.print_debug("Version: " + input.get(mypos));
+		this.version = input.get(mypos++);
+		//util.print_debug("Version: " + input.get(mypos).charCodeAt());
+		//this.version = input.get(mypos++).charCodeAt();
 
 		// A one-octet number describing the symmetric algorithm used.
-		this.symmetricKeyAlgorithmUsed = input[mypos++];
+		//util.print_debug("Symmetric key algo: " + input.get(mypos).charCodeAt());
+		//this.symmetricKeyAlgorithmUsed = input.get(mypos++).charCodeAt();
+		util.print_debug("Symmetric key algo: " + input.get(mypos));
+		this.symmetricKeyAlgorithmUsed = input.get(mypos++);
+		
 		// A string-to-key (S2K) specifier, length as defined above.
 		this.s2k = new openpgp_type_s2k();
 		this.s2k.read(input, mypos);
 
 		// Optionally, the encrypted session key itself, which is decrypted
 		// with the string-to-key object.
-		if ((s2k.s2kLength + mypos) < len) {
+		if ((this.s2k.s2kLength + mypos) < len) {
 			this.encryptedSessionKey = new Array();
 			for ( var i = (mypos - position); i < len; i++) {
-				this.encryptedSessionKey[i] = input[mypos++];
+				this.encryptedSessionKey[i] = String.fromCharCode(input.get(mypos++));
+				//this.encryptedSessionKey[i] = input.get(mypos++);
 			}
 		}
+		
 		return this;
 	}
 	/**
@@ -209,7 +273,6 @@ function openpgp_packet_encryptedsessionkey() {
 			return result;
 		} else
 			return '5.3 Symmetric-Key Encrypted Session Key Packets (Tag 3)\n'
-					+ '    KeyId:  ' + this.keyId.toString() + '\n'
 					+ '    length: ' + this.packetLength + '\n'
 					+ '    version:' + this.version + '\n' + '    symKeyA:'
 					+ this.symmetricKeyAlgorithmUsed + '\n' + '    s2k:    '
@@ -218,6 +281,7 @@ function openpgp_packet_encryptedsessionkey() {
 
 	this.read_pub_key_packet = read_pub_key_packet;
 	this.read_symmetric_key_packet = read_symmetric_key_packet;
+	this.write_symmetric_key_packet = write_symmetric_key_packet;
 	this.write_pub_key_packet = write_pub_key_packet;
 	this.toString = toString;
 	this.decrypt = decrypt;

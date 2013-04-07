@@ -30,7 +30,7 @@
  * @param openpgp_cfb [boolean]
  * @return [String] encrypted data
  */
-function openpgp_crypto_symmetricEncrypt(prefixrandom, algo, key, data, openpgp_cfb) {
+function openpgp_crypto_symmetricEncrypt(prefixrandom, algo, key, data, openpgp_cfb, inputType, progressCallback) {
 	switch(algo) {
 		case 0: // Plaintext or unencrypted data
 			return data; // blockcipherencryptfn, plaintext, block_size, key
@@ -43,7 +43,14 @@ function openpgp_crypto_symmetricEncrypt(prefixrandom, algo, key, data, openpgp_
 		case 7: // AES with 128-bit key [AES]
 		case 8: // AES with 192-bit key
 		case 9: // AES with 256-bit key
-			return openpgp_cfb_encrypt(prefixrandom, AESencrypt, data, 16, keyExpansion(key), openpgp_cfb).substring(0, data.length + 18);
+			if(inputType == "BLOB")
+			{
+				return openpgp_cfb_encrypt_large(prefixrandom, AESencrypt, data, 16, keyExpansion(key), openpgp_cfb, progressCallback).slice(0, data.length + 18);
+			} 
+			else 
+			{
+				return openpgp_cfb_encrypt(prefixrandom, AESencrypt, data, 16, keyExpansion(key), openpgp_cfb).substring(0, data.length + 18);
+			}
 		case 10: // Twofish with 256-bit key [TWOFISH]
 			return openpgp_cfb_encrypt(prefixrandom, TFencrypt, data,16, key, openpgp_cfb).substring(0, data.length + 18);
 		case 1: // IDEA [IDEA]
@@ -64,8 +71,7 @@ function openpgp_crypto_symmetricEncrypt(prefixrandom, algo, key, data, openpgp_
  * otherwise use without the resync (for MDC encrypted data)
  * @return [String] plaintext data
  */
-function openpgp_crypto_symmetricDecrypt(algo, key, data, openpgp_cfb) {
-	util.print_debug_hexstr_dump("openpgp_crypto_symmetricDecrypt:\nalgo:"+algo+"\nencrypteddata:",data);
+function openpgp_crypto_symmetricDecrypt(algo, key, data, openpgp_cfb, partialPackageLength, progressCallback) {
 	var n = 0;
 	if (!openpgp_cfb)
 		n = 2;
@@ -81,7 +87,7 @@ function openpgp_crypto_symmetricDecrypt(algo, key, data, openpgp_cfb) {
 	case 7: // AES with 128-bit key [AES]
 	case 8: // AES with 192-bit key
 	case 9: // AES with 256-bit key
-		return openpgp_cfb_decrypt(AESencrypt, 16, keyExpansion(key), data, openpgp_cfb).substring(n, (data.length+n)-18);
+		return openpgp_cfb_decrypt_large(AESencrypt, 16, keyExpansion(key), data, openpgp_cfb, partialPackageLength, progressCallback).substring(n, (data.length+n)-18);
 	case 10: // Twofish with 256-bit key [TWOFISH]
 		var result = openpgp_cfb_decrypt(TFencrypt, 16, key, data, openpgp_cfb).substring(n, (data.length+n)-18);
 		return result;

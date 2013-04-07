@@ -33,54 +33,56 @@ function openpgp_type_s2k() {
 	 */
 	function read(input, position) {
 		var mypos = position;
-		this.type = input[mypos++].charCodeAt();
+		//this.type = input.get(mypos++).charCodeAt();
+		this.type = input.get(mypos++);
+		self.debug("S2K type: " + this.type);
 		switch (this.type) {
 		case 0: // Simple S2K
 			// Octet 1: hash algorithm
-			this.hashAlgorithm = input[mypos++].charCodeAt();
+			//this.hashAlgorithm = input.get(mypos++).charCodeAt();
+			this.hashAlgorithm = input.get(mypos++);
 			this.s2kLength = 1;
 			break;
 
 		case 1: // Salted S2K
 			// Octet 1: hash algorithm
-			this.hashAlgorithm = input[mypos++].charCodeAt();
+			this.hashAlgorithm = input.get(mypos++);
+			//this.hashAlgorithm = input.get(mypos++).charCodeAt();
 
 			// Octets 2-9: 8-octet salt value
-			this.saltValue = input.substring(mypos, mypos+8);
+			//this.saltValue = input.substring(mypos, mypos+8, "STRING");
+			// Convert to string:
+			var tmpSalt = input.get(mypos, mypos+8);
+			this.saltValue = "";
+			for (var i=0; i<tmpSalt.length; i++) {
+	            this.saltValue += String.fromCharCode(tmpSalt[i])
+	        }
+			//this.saltValue = input.get(mypos, mypos+8);
 			mypos += 8;
 			this.s2kLength = 9;
 			break;
 
 		case 3: // Iterated and Salted S2K
 			// Octet 1: hash algorithm
-			this.hashAlgorithm = input[mypos++].charCodeAt();
+			//this.hashAlgorithm = input.get(mypos++).charCodeAt();
+			this.hashAlgorithm = input.get(mypos++);
 
 			// Octets 2-9: 8-octet salt value
-			this.saltValue = input.substring(mypos, mypos+8);
+			//this.saltValue = input.substring(mypos, mypos+8);
+			var tmpSalt = input.get(mypos, mypos+8);
+			this.saltValue = "";
+			for (var i=0; i<tmpSalt.length; i++) {
+	            this.saltValue += String.fromCharCode(tmpSalt[i])
+	        }
 			mypos += 8;
 
 			// Octet 10: count, a one-octet, coded value
 			this.EXPBIAS = 6;
-			var c = input[mypos++].charCodeAt();
+			//var c = input.get(mypos++).charCodeAt();
+			var c = input.get(mypos++);
+			this.c = c;
 			this.count = (16 + (c & 15)) << ((c >> 4) + this.EXPBIAS);
 			this.s2kLength = 10;
-			break;
-
-		case 101:
-			if(input.substring(mypos+1, mypos+4) == "GNU") {
-				this.hashAlgorithm = input[mypos++].charCodeAt();
-				mypos += 3; // GNU
-				var gnuExtType = 1000 + input[mypos++].charCodeAt();
-				if(gnuExtType == 1001) {
-					this.type = gnuExtType;
-					this.s2kLength = 5;
-					// GnuPG extension mode 1001 -- don't write secret key at all
-				} else {
-					util.print_error("unknown s2k gnu protection mode! "+this.type);
-				}
-			} else {
-				util.print_error("unknown s2k type! "+this.type);
-			}
 			break;
 
 		case 2: // Reserved value
@@ -96,14 +98,15 @@ function openpgp_type_s2k() {
 	 * writes an s2k hash based on the inputs.
 	 * @return {String} produced key of hashAlgorithm hash length
 	 */
-	function write(type, hash, passphrase, salt, c){
+	function write(type, hash, passphrase, salt, c, sessionKeyLength){
 	    this.type = type;
 	    if(this.type == 3){this.saltValue = salt;
 	        this.hashAlgorithm = hash;
+	        this.c = c;
 	        this.count = (16 + (c & 15)) << ((c >> 4) + 6);
 	        this.s2kLength = 10;
 	    }
-	    return this.produce_key(passphrase);
+	    return this.produce_key(passphrase, sessionKeyLength);
 	}
 
 	/**
@@ -119,20 +122,40 @@ function openpgp_type_s2k() {
 		} else if (this.type == 3) {
 			var isp = [];
 			isp[0] = this.saltValue+passphrase;
+			
 			while (isp.length*(this.saltValue+passphrase).length < this.count)
 				isp.push(this.saltValue+passphrase);
 			isp = isp.join('');			
 			if (isp.length > this.count)
 				isp = isp.substr(0, this.count);
 			if(numBytes && (numBytes == 24 || numBytes == 32)){ //This if accounts for RFC 4880 3.7.1.1 -- If hash size is greater than block size, use leftmost bits.  If blocksize larger than hash size, we need to rehash isp and prepend with 0.
-			    var key = openpgp_crypto_hashData(this.hashAlgorithm,isp);
-			    return key + openpgp_crypto_hashData(this.hashAlgorithm,String.fromCharCode(0)+isp);
+				var key = openpgp_crypto_hashData(this.hashAlgorithm,isp);
+			    return key + openpgp_crypto_hashData(this.hashAlgorithm,String.fromCharCode(0)+isp).substring(0, numBytes-key.length);
 			}
-			return openpgp_crypto_hashData(this.hashAlgorithm,isp);
+			var key = openpgp_crypto_hashData(this.hashAlgorithm,isp);
+			if(numBytes && (key.length > numBytes))
+				return key.substring(0, (key.length-(key.length-numBytes)));
+			return key;
 		} else return null;
+	}
+	
+	function toString() {
+		
+		var saltCharCodes = "";
+		for(var i = 0; i<this.saltValue.length; i++)
+		{
+			saltCharCodes += this.saltValue[i].charCodeAt() + " ";
+		}
+		return "Type: " + this.type + "\n"
+			+ "Hash Algorithm: " + this.hashAlgorithm + "\n"
+			+ "Count: " + this.count + "\n"
+			+ "C: " + this.c + "\n"
+			+ "Salt: " + saltCharCodes + "\n"
+			+ "S2K: " + this.s2kLength;
 	}
 	
 	this.read = read;
 	this.write = write;
 	this.produce_key = produce_key;
+	this.toString = toString;
 }

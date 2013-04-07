@@ -78,6 +78,40 @@ function openpgp_packet_literaldata() {
 		this.data = data;
 		return result;
 	}
+	
+	function write_packet_large(data, filename) {
+		this.filename = filename;
+		this.date = new Date();
+		this.format = 'b';
+		var result = openpgp_packet.write_packet_header(11, data.length + 6
+				+ this.filename.length);
+		result += this.format;
+		result += String.fromCharCode(this.filename.length);
+		result += this.filename;
+		result += String
+				.fromCharCode((Math.round(this.date.getTime() / 1000) >> 24) & 0xFF);
+		result += String
+				.fromCharCode((Math.round(this.date.getTime() / 1000) >> 16) & 0xFF);
+		result += String
+				.fromCharCode((Math.round(this.date.getTime() / 1000) >> 8) & 0xFF);
+		result += String
+				.fromCharCode(Math.round(this.date.getTime() / 1000) & 0xFF);
+		//result += data;
+		this.data = data;
+		var tempArray = new Uint8Array(result.length);
+		for(var i = 0; i<result.length; i++)
+		{
+			tempArray[i] = result[i].charCodeAt();
+		}
+		
+		self.debug("Literal data header length: " + result.length);
+		var blob = new Blob([util.getArrayStoreFormat(tempArray), data.blob], {type: 'application/octet-stream'});
+		//var blob = new Blob([result, data.blob], {type: 'application/octet-stream'});
+		
+		self.debug("Literal data length: " + blob.size);
+		
+		return blob;
+	}
 
 	/**
 	 * generates debug output (pretty print)
@@ -95,4 +129,5 @@ function openpgp_packet_literaldata() {
 	this.read_packet = read_packet;
 	this.toString = toString;
 	this.write_packet = write_packet;
+	this.write_packet_large = write_packet_large;
 }

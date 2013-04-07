@@ -97,6 +97,328 @@ function _openpgp_packet() {
 	/**
 	 * Generic static Packet Parser function
 	 * 
+	 * @param input
+	 *            [String] input stream as string
+	 * @param position
+	 *            [integer] position to start parsing
+	 * @param len
+	 *            [integer] length of the input from position on
+	 * @return [openpgp_packet_*] returns a parsed openpgp_packet
+	 */
+	function read_packet_large(input, position, len) {
+		// some sanity checks
+		//if (input == null || input.length <= position
+		//		|| input.substring(position).length < 2
+		//		|| (input[position].charCodeAt() & 0x80) == 0) {
+		//	util
+		//			.print_error("Error during parsing. This message / key is propably not containing a valid OpenPGP format.");
+		//	return null;
+		//}
+		var mypos = position;
+		var tag = -1;
+		var format = -1;
+
+		format = 0; // 0 = old format; 1 = new format
+		//if ((input.get(mypos).charCodeAt() & 0x40) != 0) {
+		if ((input.get(mypos) & 0x40) != 0) {
+			format = 1;
+		}
+
+		var packet_length_type;
+		if (format) {
+			// new format header
+			//tag = input.get(mypos).charCodeAt() & 0x3F; // bit 5-0
+			tag = input.get(mypos) & 0x3F; // bit 5-0
+		} else {
+			// old format header
+			//tag = (input.get(mypos).charCodeAt() & 0x3F) >> 2; // bit 5-2
+			tag = (input.get(mypos) & 0x3F) >> 2; // bit 5-2
+			packet_length_type = input.get(mypos) & 0x03; // bit 1-0
+			//packet_length_type = input.get(mypos).charCodeAt() & 0x03; // bit 1-0
+		}
+		// header octet parsing done
+		mypos++;
+
+		// parsed length from length field
+		var len = 0;
+		var bodydata = null;
+
+		var blob = undefined;
+		var partialPackageLength = 0;
+		
+		// used for partial body lengths
+		util.print_debug("format: " + format);
+		var real_packet_length = -1;
+		if (!format) {
+			// 4.2.1. Old Format Packet Lengths
+			util.print_debug("packet length type: " + packet_length_type);
+			switch (packet_length_type) {
+			case 0: // The packet has a one-octet length. The header is 2 octets
+				// long.
+				packet_length = input.get(mypos++);
+				//packet_length = input.get(mypos++).charCodeAt();
+				break;
+			case 1: // The packet has a two-octet length. The header is 3 octets
+				// long.
+				packet_length = (input.get(mypos++) << 8)
+						| input.get(mypos++);
+				//packet_length = (input.get(mypos++).charCodeAt() << 8)
+				//		| input.get(mypos++).charCodeAt();
+				break;
+			case 2: // The packet has a four-octet length. The header is 5
+				// octets long.
+				//packet_length = (input.get(mypos++).charCodeAt() << 24)
+				//		| (input.get(mypos++).charCodeAt() << 16)
+				//		| (input.get(mypos++).charCodeAt() << 8)
+				//		| input.get(mypos++).charCodeAt();
+				packet_length = (input.get(mypos++) << 24)
+						| (input.get(mypos++) << 16)
+						| (input.get(mypos++) << 8)
+						| input.get(mypos++);
+				break;
+			default:
+				// 3 - The packet is of indeterminate length. The header is 1
+				// octet long, and the implementation must determine how long
+				// the packet is. If the packet is in a file, this means that
+				// the packet extends until the end of the file. In general, 
+				// an implementation SHOULD NOT use indeterminate-length 
+				// packets except where the end of the data will be clear 
+				// from the context, and even then it is better to use a 
+				// definite length, or a new format header. The new format 
+				// headers described below have a mechanism for precisely
+				// encoding data of indeterminate length.
+			}
+
+		} else // 4.2.2. New Format Packet Lengths
+		{
+			// 4.2.2.1. One-Octet Lengths
+			//if (input.get(mypos).charCodeAt() < 192) {
+			if (input.get(mypos) < 192) {
+				//packet_length = input.get(mypos++).charCodeAt();
+				packet_length = input.get(mypos++);
+				util.print_debug("1 byte length:" + packet_length);
+				// 4.2.2.2. Two-Octet Lengths
+			//} else if (input.get(mypos).charCodeAt() >= 192
+			//		&& input.get(mypos).charCodeAt() < 224) {
+			} else if (input.get(mypos) >= 192
+					&& input.get(mypos) < 224) {	
+				packet_length = ((input.get(mypos++) - 192) << 8)
+						+ (input.get(mypos++)) + 192;
+				//packet_length = ((input.get(mypos++).charCodeAt() - 192) << 8)
+				//		+ (input.get(mypos++).charCodeAt()) + 192;
+				util.print_debug("2 byte length:" + packet_length);
+				// 4.2.2.4. Partial Body Lengths
+			//} else if (input.get(mypos).charCodeAt() > 223
+			//		&& input.get(mypos).charCodeAt() < 255) {
+			//	packet_length = 1 << (input.get(mypos++).charCodeAt() & 0x1F);
+			//	util.print_debug("partial body length: " + packet_length);
+			} else if (input.get(mypos) > 223
+					&& input.get(mypos) < 255) {
+				packet_length = 1 << (input.get(mypos++) & 0x1F);
+				util.print_debug("partial body length: " + packet_length);
+				
+				// Partial body length, skip calculating length and move on.
+				blob = new Blob([util.getArrayStoreFormat(input.get(mypos, input.length))], {type: 'application/octet-stream'});
+				util.print_debug("packet_length: " + (packet_length));
+				partialPackageLength = packet_length;
+				packet_length = -1;
+				
+			} else { // 4.2.2.3. Five-Octet Lengths
+				mypos++;
+				//packet_length = (input.get(mypos++).charCodeAt() << 24)
+				//		| (input.get(mypos++).charCodeAt() << 16)
+				//		| (input.get(mypos++).charCodeAt() << 8)
+				//		| input.get(mypos++).charCodeAt();
+				packet_length = (input.get(mypos++) << 24)
+						| (input.get(mypos++) << 16)
+						| (input.get(mypos++) << 8)
+						| input.get(mypos++);
+				util.print_debug("Else:" + packet_length);
+			}
+		}
+
+		// if there was'nt a partial body length: use the specified
+		// packet_length
+		if (real_packet_length == -1) {
+			real_packet_length = packet_length;
+		}
+
+		if (bodydata == null) {
+			if(tag == 9) {
+				if(blob != undefined) {
+					util.print_debug("Got our blob with length: " + blob.size);
+					//blob = new Blob([blob, input.substring(mypos, mypos + real_packet_length, "BLOB")], {type: 'application/octet-stream'});
+				} else {
+					blob = new Blob([util.getArrayStoreFormat(input.get(mypos, mypos + real_packet_length))], {type: 'application/octet-stream'});
+				}
+			} else {
+				bodydata = new uint8ArrayBuffer(new Blob([input.get(mypos, mypos + real_packet_length)], {type: 'application/octet-stream'}));
+			}
+		}
+
+		// alert('tag type: '+this.tag+' length: '+packet_length);
+		var version = 1; // (old format; 2= new format)
+		// if (input[mypos++].charCodeAt() > 15)
+		// version = 2;
+
+		switch (tag) {
+		case 0: // Reserved - a packet tag MUST NOT have this value
+			break;
+		case 1: // Public-Key Encrypted Session Key Packet
+			var result = new openpgp_packet_encryptedsessionkey();
+			if (result.read_pub_key_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 2: // Signature Packet
+			var result = new openpgp_packet_signature();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 3: // Symmetric-Key Encrypted Session Key Packet
+			var result = new openpgp_packet_encryptedsessionkey();
+			if (result.read_symmetric_key_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 4: // One-Pass Signature Packet
+			var result = new openpgp_packet_onepasssignature();
+			if (result.read_packet(bodydata, 0, packet_length)) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 5: // Secret-Key Packet
+			var result = new openpgp_packet_keymaterial();
+			result.header = input.substring(position, mypos);
+			if (result.read_tag5(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 6: // Public-Key Packet
+			var result = new openpgp_packet_keymaterial();
+			result.header = input.substring(position, mypos);
+			if (result.read_tag6(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 7: // Secret-Subkey Packet
+			var result = new openpgp_packet_keymaterial();
+			if (result.read_tag7(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 8: // Compressed Data Packet
+			var result = new openpgp_packet_compressed();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 9: // Symmetrically Encrypted Data Packet
+			var result = new openpgp_packet_encrypteddata();
+			//if (result.read_packet(new buffer(bb.getBlob('application/octet-stream')), 0, packet_length) != null) {
+			//if (result.read_packet(new buffer(blob), 0, packet_length, partialPackageLength) != null) {
+			if (result.read_packet(new uint8ArrayBuffer(blob), 0, packet_length, partialPackageLength) != null) {
+				result.partialPackageLength = partialPackageLength;
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				util.print_debug("Partial package length: " + result.partialPackageLength);
+				util.print_debug("Header length: " + result.headerLength);
+				util.print_debug("Package length: " + result.packetLength);
+				return result;
+			}
+			break;
+		case 10: // Marker Packet = PGP (0x50, 0x47, 0x50)
+			var result = new openpgp_packet_marker();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 11: // Literal Data Packet
+			var result = new openpgp_packet_literaldata();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.header = input.substring(position, mypos);
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 12: // Trust Packet
+			// TODO: to be implemented
+			break;
+		case 13: // User ID Packet
+			var result = new openpgp_packet_userid();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 14: // Public-Subkey Packet
+			var result = new openpgp_packet_keymaterial();
+			result.header = input.substring(position, mypos);
+			if (result.read_tag14(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 17: // User Attribute Packet
+			var result = new openpgp_packet_userattribute();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 18: // Sym. Encrypted and Integrity Protected Data Packet
+			var result = new openpgp_packet_encryptedintegrityprotecteddata();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		case 19: // Modification Detection Code Packet
+			var result = new openpgp_packet_modificationdetectioncode();
+			if (result.read_packet(bodydata, 0, packet_length) != null) {
+				result.headerLength = mypos - position;
+				result.packetLength = real_packet_length;
+				return result;
+			}
+			break;
+		default:
+			util.print_error("openpgp.packet.js\n"
+					+ "[ERROR] openpgp_packet: failed to parse packet @:"
+					+ mypos + "\nchar:'"
+					+ util.hexstrdump(input.substring(mypos)) + "'\ninput:"
+					+ util.hexstrdump(input));
+			return null;
+			break;
+		}
+	}
+
+	/**
+	 * Generic static Packet Parser function
+	 * 
 	 * @param {String} input input stream as string
 	 * @param {integer} position position to start parsing
 	 * @param {integer} len length of the input from position on
@@ -402,6 +724,7 @@ function _openpgp_packet() {
 	}
 
 	this.read_packet = read_packet;
+	this.read_packet_large = read_packet_large;
 }
 
 var openpgp_packet = new _openpgp_packet();

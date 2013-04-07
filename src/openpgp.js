@@ -128,39 +128,34 @@ function _openpgp () {
 	 * @return {Array[openpgp_msg_message]} on error the function
 	 * returns null
 	 */
-	function read_message(armoredText) {
-		var dearmored;
-		try{
-    		dearmored = openpgp_encoding_deArmor(armoredText.replace(/\r/g,''));
-		}
-		catch(e){
-    		util.print_error('no message found!');
-    		return null;
-		}
-		return read_messages_dearmored(dearmored);
+	function read_message(armoredText, dearmor) {
+		var messageType;
+		var input;
+		if(dearmor) {
+			var dearmored;
+			try{
+	    		dearmored = openpgp_encoding_deArmor(armoredText.replace(/\r/g,''));
+			}
+			catch(e){
+	    		util.print_error('no message found!');
+	    		return null;
+			}
+			messageType = dearmored.type;
+			input = dearmored.openpgp;
+		} else {
+			input = armoredText;
+			// Hardcode to 3 for now. 3 = BEGIN PGP MESSAGE
+			messageType = 3;
 		}
 		
-	/**
-	 * reads message packets out of an OpenPGP armored text and
-	 * returns an array of message objects. Can be called externally or internally.
-	 * External call will parse a de-armored messaged and return messages found.
-	 * Internal will be called to read packets wrapped in other packets (i.e. compressed)
-	 * @param {String} input dearmored text of OpenPGP packets, to be parsed
-	 * @return {Array[openpgp_msg_message]} on error the function
-	 * returns null
-	 */
-	function read_messages_dearmored(input){
-		var messageString = input.openpgp;
-		var signatureText = input.text; //text to verify signatures against. Modified by Tag11.
 		var messages = new Array();
 		var messageCount = 0;
 		var mypos = 0;
-		var l = messageString.length;
-		while (mypos < messageString.length) {
-			var first_packet = openpgp_packet.read_packet(messageString, mypos, l);
-			if (!first_packet) {
-				break;
-			}
+		var l = input.length;
+		
+		while (mypos < input.length) {
+			util.print_debug("Reading from: " + mypos);
+			var first_packet = openpgp_packet.read_packet_large(input, mypos, l);
 			// public key parser (definition from the standard:)
 			// OpenPGP Message      :- Encrypted Message | Signed Message |
 			//                         Compressed Message | Literal Message.
@@ -195,7 +190,8 @@ function _openpgp () {
 				 first_packet.tagType == 19) {
 				messages[messages.length] = new openpgp_msg_message();
 				messages[messageCount].messagePacket = first_packet;
-				messages[messageCount].type = input.type;
+				//messages[messageCount].type = dearmored.type;
+				messages[messageCount].type = messageType;
 				// Encrypted Message
 				if (first_packet.tagType == 9 ||
 				    first_packet.tagType == 1 ||
@@ -204,7 +200,7 @@ function _openpgp () {
 					if (first_packet.tagType == 9) {
 						util.print_error("unexpected openpgp packet");
 						break;
-					} else if (first_packet.tagType == 1) {
+					} else if (first_packet.tagType == 1 || first_packet.tagType == 3) {
 						util.print_debug("session key found:\n "+first_packet.toString());
 						var issessionkey = true;
 						messages[messageCount].sessionKeys = new Array();
@@ -213,19 +209,24 @@ function _openpgp () {
 							messages[messageCount].sessionKeys[sessionKeyCount] = first_packet;
 							mypos += first_packet.packetLength + first_packet.headerLength;
 							l -= (first_packet.packetLength + first_packet.headerLength);
-							first_packet = openpgp_packet.read_packet(messageString, mypos, l);
+							first_packet = openpgp_packet.read_packet_large(input, mypos, l);
 							
 							if (first_packet.tagType != 1 && first_packet.tagType != 3)
 								issessionkey = false;
 							sessionKeyCount++;
 						}
+						util.print_debug("packet tag: "+first_packet.tagType);
+						if(first_packet.tagType == 8) {
+							util.print_debug("compressed packet found:\n "+first_packet.toString());
+						}
 						if (first_packet.tagType == 18 || first_packet.tagType == 9) {
-							util.print_debug("encrypted data found:\n "+first_packet.toString());
+							//util.print_debug("encrypted data found:\n "+first_packet.toString());
 							messages[messageCount].encryptedData = first_packet;
 							mypos += first_packet.packetLength+first_packet.headerLength;
 							l -= (first_packet.packetLength+first_packet.headerLength);
 							messageCount++;
 							
+							mypos = input.length;
 						} else {
 							util.print_debug("something is wrong: "+first_packet.tagType);
 						}
@@ -235,13 +236,11 @@ function _openpgp () {
 						break;
 					}
 				} else 
-					if (first_packet.tagType == 2 && first_packet.signatureType < 3) {
 					// Signed Message
-						mypos += first_packet.packetLength + first_packet.headerLength;
-						l -= (first_packet.packetLength + first_packet.headerLength);
-						messages[messageCount].text = signatureText;
+					if (first_packet.tagType == 2 && first_packet.signatureType < 3) {
+						messages[messageCount].text = dearmored.text;
 						messages[messageCount].signature = first_packet;
-				        messageCount++;
+						break;
 				} else 
 					// Signed Message
 					if (first_packet.tagType == 4) {
@@ -345,6 +344,40 @@ function _openpgp () {
 		return openpgp_encoding_armor(3,result2,null,null);
 	}
 	/**
+	 * Encrypts a message after deriving the sessionkey using the passphrase, type of S2K and hash algorithm.
+	 * The message will be encrypted with the derived session key using the encryption cipher.
+	 * At last the packet will be optionally armored. This function will create a PGP message containing packets 
+	 * 3 and 11.
+	 * @param passphrase [String] passphrase to be used when deriving the session key.
+	 * @param messagetext [String] message text to encrypt and sign
+	 * @param salt [String] 8 byte long String containing the salt.
+	 * @param armor [boolean] Flag indicating to whether or not the message should be armored.
+	 * @param returnType [String] Flag to decide what return type is wanted. String | Blob
+	 * @param progressCallback [function] Function which will be called with updated progress on how the encryption is going. Takes a number as a parameter.
+	 * @return [String] A string representation of the message which in either raw bytes or armored depending on a flag.
+	 */
+	function write_encrypted_message_using_symmetric_key(passphrase, messagetext, filename, salt, returnType, progressCallback, browser) {
+        util.setBrowser(browser);
+
+        var sessionKeyPackage = new openpgp_packet_encryptedsessionkey();
+		var sessionKeyPackageStr = sessionKeyPackage.write_symmetric_key_packet(9, 3, passphrase, 2, salt, 96);
+		
+		var literal = new uint8ArrayBuffer(new openpgp_packet_literaldata().write_packet_large(messagetext, filename));
+		var encryptedData = new openpgp_packet_encrypteddata().write_packet_large(9, sessionKeyPackage.key, literal, progressCallback);
+		
+		util.print_debug("encrypted data length: " + encryptedData.size);
+		util.print_debug("packet 3 length: " + sessionKeyPackageStr.length);
+		var tempArray = new Uint8Array(sessionKeyPackageStr.length);
+		for(var i = 0; i<sessionKeyPackageStr.length; i++)
+		{
+			tempArray[i] = sessionKeyPackageStr[i].charCodeAt();
+		}
+
+		self.debug("Returning the encrypted file: " + tempArray.length + " " + encryptedData.size);
+		return new Blob([util.getArrayStoreFormat(tempArray), encryptedData], {type: 'application/octet-stream'});
+	}
+	
+	/**
 	 * creates a binary string representation of an encrypted message.
 	 * The message will be encrypted with the public keys specified 
 	 * @param {Array {obj: [openpgp_msg_publickey]}} publickeys public
@@ -437,11 +470,11 @@ function _openpgp () {
 	}
 	
 	this.generate_key_pair = generate_key_pair;
-	this.write_signed_message = write_signed_message; 
+	this.write_signed_message = write_signed_message;
+	this.write_encrypted_message_using_symmetric_key = write_encrypted_message_using_symmetric_key;
 	this.write_signed_and_encrypted_message = write_signed_and_encrypted_message;
 	this.write_encrypted_message = write_encrypted_message;
 	this.read_message = read_message;
-	this.read_messages_dearmored = read_messages_dearmored;
 	this.read_publicKey = read_publicKey;
 	this.read_privateKey = read_privateKey;
 	this.init = init;

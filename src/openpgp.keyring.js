@@ -28,7 +28,7 @@ function openpgp_keyring() {
 	 * @return {null} undefined
 	 */
 	function init() {
-		var sprivatekeys = JSON.parse(window.localStorage.getItem("privatekeys"));
+		/*var sprivatekeys = JSON.parse(window.localStorage.getItem("privatekeys"));
 		var spublickeys = JSON.parse(window.localStorage.getItem("publickeys"));
 		if (sprivatekeys == null || sprivatekeys.length == 0) {
 			sprivatekeys = new Array();
@@ -52,7 +52,7 @@ function openpgp_keyring() {
 				this.publicKeys[k] = { armored: spublickeys[i], obj: r[0], keyId: r[0].getKeyId()};
 				k++;
 			}
-		}
+		}*/
 	}
 	this.init = init;
 

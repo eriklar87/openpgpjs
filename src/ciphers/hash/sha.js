@@ -68,6 +68,135 @@ var jsSHA = (function () {
 		return bin;
 	},
 
+	str2binb_large_array = function (input, progressCallback)
+	{
+		var bin = [], mask = (1 << charSize) - 1,
+			length = input.length * charSize, i;
+
+		var blob = undefined, arrayIndex = 0;
+		var buffIndex = 0, totalSize = 0;
+		//self.updateProgress(label, 0);
+		
+		// Calculate the length of the resulting array
+		self.debug("Doing the first half.");
+		self.debug("Incoming Length: " + length + " org length: " + input.length);
+		self.progressCallback = progressCallback;
+
+        self.progressCallback(0);
+
+		for (i = 0; i < length; i += charSize)
+		{
+			//bin[arrayIndex >> 5] |= (input.get(i / charSize) & mask) <<
+			//	(32 - charSize - (i % 32));
+
+            //bin[arrayIndex >> 5] = bin[arrayIndex >> 5] | (input.get(i / charSize) & mask) << (32 - charSize - (i % 32));
+            //bin[arrayIndex >> 5] |= (input.get(i / charSize) & mask) * Math.pow(2, (32 - charSize - (i % 32)));
+            var binIndex = Math.floor((arrayIndex/Math.pow(2,5)));
+            bin[binIndex] = bin[binIndex] | (input.get(i / charSize) & mask) * Math.pow(2, (32 - charSize - (i % 32)));
+
+			//if(buffIndex > 100000 && (arrayIndex >> 5) != ((arrayIndex+8) >> 5)) {
+            //if(buffIndex > 100000 && (binIndex) != ((arrayIndex+8) >> 5)) {
+            if(buffIndex > 100000 && (binIndex) != (Math.floor((arrayIndex/Math.pow(2,5))))) {
+                if(blob != undefined) {
+					blob = new Blob([blob, util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+				} else {
+					blob = new Blob([util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+				}
+				totalSize += bin.length;
+				arrayIndex = 0;
+				buffIndex = 0;
+				bin = [];
+			} else {
+				arrayIndex+=charSize;
+			}
+			
+			if(i%20000 == 0) {
+				var percentComplete = Math.round(((((i / length)*100)*Math.pow(10,2))/Math.pow(10,2))/2);
+				progressCallback(percentComplete);
+			}
+			
+			buffIndex += charSize;
+		}
+		
+		var buffer = undefined;
+		if(blob != undefined) {
+			self.debug("Blob is not undefined");
+			blob = new Blob([blob, util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+			buffer = new array32Buffer(blob);
+			//buffer = new Array32Buffer(blob);
+			//buffer.append(new Int32Array(bin));
+		} else {
+			self.debug("Blob is undefined");
+			blob = new Blob([util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+			buffer = new array32Buffer(blob);
+		}
+		
+		//var buffer = new buffer_new(blob, "Int32");
+		self.debug("Returning with size: " + buffer.length);
+		
+		return buffer;
+	},
+
+	
+	str2binb_large = function (input, progressCallback)
+	{
+		var bin = [], mask = (1 << charSize) - 1,
+			length = input.length * charSize, i;
+
+		var blob = undefined, arrayIndex = 0;
+		var buffIndex = 0, totalSize = 0;
+		progressCallback(0);
+		//self.updateProgress(label, 0);
+		
+		// Calculate the length of the resulting array
+		self.debug("Doing the first half.");
+		self.debug("Incoming Length: " + length + " org length: " + input.length);
+		
+		for (i = 0; i < length; i += charSize)
+		{
+			//self.debug("i: " + (i / charSize));
+			//self.debug("i: " + input[i].charCodeAt());
+			bin[arrayIndex >> 5] |= (input.get(i / charSize).charCodeAt() & mask) <<
+				(32 - charSize - (i % 32));
+			
+			//bin[arrayIndex >> 5] |= (input[(i / charSize)] & mask) << (32 - charSize - (i % 32));
+			//self.debug("->" + bin[arrayIndex >> 5]);
+			
+			if(buffIndex > 100000 && (arrayIndex >> 5) != ((arrayIndex+8) >> 5)) {
+			//if(buffIndex > 100000 && (arrayIndex >> 5) != ((arrayIndex+8) >> 5)) {
+				if(blob != undefined) {
+					blob = new Blob([blob, util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+				} else {
+					blob = new Blob([util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+				}
+				totalSize += bin.length;
+				arrayIndex = 0;
+				buffIndex = 0;
+				bin = [];
+			} else {
+				arrayIndex+=charSize;
+			}
+			
+			// Send back progress
+			//if((i%200000) == 0) {
+			//	var percentComplete = Math.round(((((i / length)*100)*Math.pow(10,2))/Math.pow(10,2))/2);
+			//	progressCallback(percentComplete);
+			//	//self.updateProgress(label, percentComplete);
+			//}
+			
+			buffIndex += charSize;
+		}
+		
+		if(blob != undefined) {
+			blob = new Blob([blob, util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+		} else {
+			blob = new Blob([util.getArrayStoreFormat(new Int32Array(bin))], {type: 'application/octet-stream'});
+		}
+		var buffer = new bufferArray(blob);
+		self.debug("Returning with size: " + buffer.length);
+		return buffer;
+	},
+
 	/*
 	 * Convert a hex string to an array of big-endian words
 	 *
@@ -697,6 +826,139 @@ var jsSHA = (function () {
 
 		return H;
 	},
+	
+	coreSHA1_large = function (message, messageLen, progressCallback)
+	{
+		var W = [], a, b, c, d, e, T, ch = ch_32, parity = parity_32,
+			maj = maj_32, rotl = rotl_32, safeAdd_2 = safeAdd_32_2, i, t,
+			safeAdd_5 = safeAdd_32_5, appendedMessageLength,
+			H = [
+				0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0
+			],
+			K = [
+				0x5a827999, 0x5a827999, 0x5a827999, 0x5a827999,
+				0x5a827999, 0x5a827999, 0x5a827999, 0x5a827999,
+				0x5a827999, 0x5a827999, 0x5a827999, 0x5a827999,
+				0x5a827999, 0x5a827999, 0x5a827999, 0x5a827999,
+				0x5a827999, 0x5a827999, 0x5a827999, 0x5a827999,
+				0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1,
+				0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1,
+				0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1,
+				0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1,
+				0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1,
+				0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc,
+				0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc,
+				0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc,
+				0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc,
+				0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc,
+				0xca62c1d6, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6,
+				0xca62c1d6, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6,
+				0xca62c1d6, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6,
+				0xca62c1d6, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6,
+				0xca62c1d6, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6
+			];
+
+		// make sure we have room to append.
+		//self.debug('Comparing: ' + (messageLen >> 5) + ' ' + message.length);
+        self.debug('Comparing: ' + messageLen +  ' ' + (messageLen / Math.pow(2,5)) + ' ' + (Math.floor(messageLen / Math.pow(2,5))) + ' ' + message.length);
+        //if((messageLen >> 5) == message.length) {
+        if((Math.floor(messageLen / Math.pow(2,5))) == message.length) {
+			var zeroArray = new Int32Array(1);
+			zeroArray[0] = 0;
+			message.append(zeroArray);
+		}
+		
+		/* Append '1' at the end of the binary string */
+		//var strFromBuff = message.get(messageLen >> 5);
+        var strFromBuff = message.get(Math.floor(messageLen / Math.pow(2,5)));
+        //var appendedString = strFromBuff | (0x80 << (24 - (messageLen % 32)));
+        var appendedString = strFromBuff | (0x80 * Math.pow(2, (24 - (messageLen % 32))));
+        self.debug("Appended string: " + appendedString + " " + strFromBuff);
+		//self.debug("In buffer: " + message.get(messageLen >> 5));
+        self.debug("In buffer: " + message.get(Math.floor(messageLen / Math.pow(2,5))));
+		//message.set((messageLen >> 5), appendedString);
+        message.set((Math.floor(messageLen / Math.pow(2,5))), appendedString);
+        //self.debug(message.get(messageLen >> 5));
+		
+		/* Append length of binary string in the position such that the new
+		length is a multiple of 512.  Logic does not work for even multiples
+		of 512 but there can never be even multiples of 512 */
+		self.debug('Incoming array length: ' + message.length + " " + messageLen);
+		self.debug('Creating new array with length: ' + ((((messageLen + 65) >> 9) << 4) + 15 + 1));
+		
+		// (messageLen + 65) >> 9 == Math.floor((messageLen + 65) / Math.pow(2, 9)) ... (2^9)
+		// a << 4 == a * Math.pow(2,4) ... (2^4)
+		
+		var oldDifference = (((((messageLen + 65) >> 9) << 4) + 15 + 1)) - message.length;
+		var difference = (((Math.floor((messageLen + 65) / Math.pow(2, 9))) * Math.pow(2,4)) + 15 + 1) - message.length;
+		self.debug("Difference: " + difference + " " + oldDifference + " " + message.length + " " + messageLen);
+		var arr = new Int32Array(difference);
+		self.debug('null arr: ' + arr.length);
+		for(var i = 0; i<arr.length-1; i++) {
+			arr[i] = 0;
+		}
+		arr[arr.length-1] = messageLen;
+		message.append(arr);
+		
+		appendedMessageLength = message.length;
+		
+		for (i = 0; i < appendedMessageLength; i += 16)
+		{
+			a = H[0];
+			b = H[1];
+			c = H[2];
+			d = H[3];
+			e = H[4];
+
+			for (t = 0; t < 80; t += 1)
+			{
+				if (t < 16)
+				{
+					W[t] = message.get(t + i);
+				}
+				else
+				{
+					W[t] = rotl(W[t - 3] ^ W[t - 8] ^ W[t - 14] ^ W[t - 16], 1);
+				}
+
+				if (t < 20)
+				{
+					T = safeAdd_5(rotl(a, 5), ch(b, c, d), e, K[t], W[t]);
+				}
+				else if (t < 40)
+				{
+					T = safeAdd_5(rotl(a, 5), parity(b, c, d), e, K[t], W[t]);
+				}
+				else if (t < 60)
+				{
+					T = safeAdd_5(rotl(a, 5), maj(b, c, d), e, K[t], W[t]);
+				} else {
+					T = safeAdd_5(rotl(a, 5), parity(b, c, d), e, K[t], W[t]);
+				}
+
+				e = d;
+				d = c;
+				c = rotl(b, 30);
+				b = a;
+				a = T;
+			}
+
+			if((i%20000) == 0) {
+				var percentComplete = 50 + Math.round(((((i / appendedMessageLength)*100)*Math.pow(10,2))/Math.pow(10,2))/2);
+				progressCallback(percentComplete);
+			}
+			
+			bytesSoFar = i;
+			
+			H[0] = safeAdd_2(a, H[0]);
+			H[1] = safeAdd_2(b, H[1]);
+			H[2] = safeAdd_2(c, H[2]);
+			H[3] = safeAdd_2(d, H[3]);
+			H[4] = safeAdd_2(e, H[4]);
+		}
+		
+		return H;
+	},
 
 	/*
 	 * Calculates the desired SHA-2 hash of the string set at instantiation
@@ -948,9 +1210,8 @@ var jsSHA = (function () {
 	 * @param {String} srcString The string to be hashed
 	 * @param {String} inputFormat The format of srcString, ASCII or HEX
 	 */
-	jsSHA = function (srcString, inputFormat)
-	{
-
+	jsSHA = function (srcString, inputFormat, inputType, progressCallback)
+	{		
 		this.sha1 = null;
 		this.sha224 = null;
 		this.sha256 = null;
@@ -959,6 +1220,9 @@ var jsSHA = (function () {
 
 		this.strBinLen = null;
 		this.strToHash = null;
+		this.inputType = inputType;
+		this.progressCallback = progressCallback;
+		//this.label = label;
 
 		/* Convert the input string into the correct type */
 		if ("HEX" === inputFormat)
@@ -968,13 +1232,18 @@ var jsSHA = (function () {
 				return "TEXT MUST BE IN BYTE INCREMENTS";
 			}
 			this.strBinLen = srcString.length * 4;
+			// Do this part by part later on
 			this.strToHash = hex2binb(srcString);
 		}
 		else if (("ASCII" === inputFormat) ||
 			 ('undefined' === typeof(inputFormat)))
 		{
 			this.strBinLen = srcString.length * charSize;
-			this.strToHash = str2binb(srcString);
+			if(inputType == "BUFFER") {
+				this.strToHash = str2binb_large_array(srcString, progressCallback);
+			} else {
+				this.strToHash = str2binb(srcString);
+			}
 		}
 		else
 		{
@@ -1061,7 +1330,7 @@ var jsSHA = (function () {
 		 * @return The string representation of the hash in the format specified
 		 */
 		getHMAC : function (key, inputFormat, variant, outputFormat)
-		{
+		{	
 			var formatFunc, keyToUse, blockByteSize, blockBitSize, i,
 				retVal, lastArrayIndex, keyBinLen, hashBitSize,
 				keyWithIPad = [], keyWithOPad = [];
@@ -1122,7 +1391,7 @@ var jsSHA = (function () {
 			}
 			else if ("ASCII" === inputFormat)
 			{
-				keyToUse = str2binb(key);
+				keyToUse = str2binb(key, 'ARRAY');
 				keyBinLen = key.length * charSize;
 			}
 			else
@@ -1169,12 +1438,35 @@ var jsSHA = (function () {
 			/* Calculate the HMAC */
 			if ("SHA-1" === variant)
 			{
-				retVal = coreSHA1(
+				
+				if(this.inputType == "BUFFER") {
+                    self.debug("Buffer: " + this.strToHash.length);
+					this.strToHash.prepend(new Int32Array(keyWithIPad));
+                    self.debug("After prepending: " + this.strToHash.length);
+					
+					self.debug("----------------------------------------------");
+					
+					//var newArray = new array32Buffer(this.strToHash.returnBlob());
+					
+					retVal = coreSHA1_large(
+							this.strToHash,
+							blockBitSize + this.strBinLen, this.progressCallback);
+					
+					retVal = coreSHA1(
+							keyWithOPad.concat(retVal),
+							blockBitSize + hashBitSize, this.progressCallback);
+					
+				} else {
+					retVal = coreSHA1(
 							keyWithIPad.concat(this.strToHash),
 							blockBitSize + this.strBinLen);
-				retVal = coreSHA1(
+					self.debug('Done with the first half');
+					self.debug('retVal' + retVal);
+					retVal = coreSHA1(
 							keyWithOPad.concat(retVal),
 							blockBitSize + hashBitSize);
+
+				}
 			}
 			else
 			{

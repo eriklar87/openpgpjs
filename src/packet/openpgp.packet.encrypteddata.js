@@ -31,6 +31,7 @@ function openpgp_packet_encrypteddata() {
 	this.packetLength = null;
 	this.encryptedData = null;
 	this.decryptedData = null;
+	this.partialPackageLength = null;
 
 	/**
 	 * parsing function for the packet.
@@ -41,15 +42,21 @@ function openpgp_packet_encrypteddata() {
 	 *            input at position
 	 * @return {openpgp_packet_encrypteddata} object representation
 	 */
-	function read_packet(input, position, len) {
+	function read_packet(input, position, len, partialPackageLength) {
 		var mypos = position;
 		this.packetLength = len;
 		// - Encrypted data, the output of the selected symmetric-key cipher
 		// operating in OpenPGP's variant of Cipher Feedback (CFB) mode.
-		this.encryptedData = input.substring(position, position + len);
+		//this.encryptedData = input.substring(position, position + len);
+		this.encryptedData = input;
+		this.partialPackageLength = partialPackageLength;
 		return this;
 	}
 
+	var decryptedBytes = 30;
+	function getDecryptedBytes() {
+		return decryptedBytes;
+	}
 	/**
 	 * symmetrically decrypt the packet data
 	 * 
@@ -60,11 +67,10 @@ function openpgp_packet_encrypteddata() {
 	 *            algorithm
 	 * @return the decrypted data;
 	 */
-	function decrypt_sym(symmetric_algorithm_type, key) {
+	function decrypt_sym(symmetric_algorithm_type, key, progressCallback) {
 		this.decryptedData = openpgp_crypto_symmetricDecrypt(
-				symmetric_algorithm_type, key, this.encryptedData, true);
-		util.print_debug("openpgp.packet.encryptedintegrityprotecteddata.js\n"+
-				"data: "+util.hexstrdump(this.decryptedData));
+				symmetric_algorithm_type, key, this.encryptedData, true, this.partialPackageLength, progressCallback);
+		
 		return this.decryptedData;
 	}
 
@@ -85,6 +91,19 @@ function openpgp_packet_encrypteddata() {
 		return result;
 	}
 
+	function write_packet_large(algo, key, data, progressCallback) {
+		var result = openpgp_crypto_symmetricEncrypt(
+				openpgp_crypto_getPrefixRandom(algo), algo, key, data, true, "BLOB", progressCallback);
+		var header = openpgp_packet.write_packet_header(9, result.size);
+		var arrHeader = new Uint8Array(header.length);
+		for(var i = 0; i<arrHeader.length; i++)
+		{
+			arrHeader[i] = header[i].charCodeAt();
+		}
+		result = new Blob([util.getArrayStoreFormat(arrHeader), result], {type: 'application/octet-stream'});
+		return result;
+	}
+	
 	function toString() {
 		return '5.7.  Symmetrically Encrypted Data Packet (Tag 9)\n'
 				+ '    length:  ' + this.packetLength + '\n'
@@ -96,4 +115,6 @@ function openpgp_packet_encrypteddata() {
 	this.toString = toString;
 	this.read_packet = read_packet;
 	this.write_packet = write_packet;
+	this.write_packet_large = write_packet_large;
+	this.getDecryptedBytes = getDecryptedBytes;
 };

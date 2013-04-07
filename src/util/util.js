@@ -270,6 +270,24 @@ var Util = function() {
 		}
 		return "unknown";
 	};
+	
+	function showMessages(text) {
+		self.debug(text);
+	};
+
+    this.browser = "";
+
+    this.getArrayStoreFormat = function (input) {
+      if(this.browser == "Safari") {
+          return input.buffer;
+      } else {
+          return input;
+      }
+    };
+
+    this.setBrowser = function (browser) {
+      this.browser = browser;
+    };
 };
 
 /**

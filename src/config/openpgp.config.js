@@ -54,13 +54,13 @@ function openpgp_config() {
 	 * @return [void]
 	 */
 	function read() {
-		var cf = JSON.parse(window.localStorage.getItem("config"));
+		/*var cf = JSON.parse(window.localStorage.getItem("config"));
 		if (cf == null) {
 			this.config = this.default_config;
 			this.write();
 		}
 		else
-			this.config = cf;
+			this.config = cf;*/
 	}
 
 	/**
